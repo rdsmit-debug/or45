@@ -14,7 +14,11 @@
 <meta property="og:title" content="OR 45 · Digital Twin">
 <meta property="og:description" content="Tap to explore the operating room in 3D on your phone.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="preview.jpg">
+<meta property="og:url" content="https://rdsmit-debug.github.io/or45/">
+<meta property="og:image" content="https://rdsmit-debug.github.io/or45/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
 <link rel="stylesheet" href="viewer.css">
@@ -318,15 +322,18 @@ const fail = (msg) => {
 // Viewer
 // ---------------------------------------------------------------------------
 const OFF = { enabled: false };
+// Light sharpening counters the soft look of splats on a small screen. ?sharp=0 turns it off.
+const SHARP = params.has('sharp') ? Math.max(0, Math.min(1, Number(params.get('sharp')) || 0)) : 0.45;
+const GRADE = params.get('grade') !== '0';
 const settings = {
   version: 2,
   tonemapping: 'none',
   highPrecisionRendering: false,
   background: { color: [0.043, 0.051, 0.063] },
   postEffectSettings: {
-    sharpness: { ...OFF, amount: 0 },
+    sharpness: { enabled: SHARP > 0, amount: SHARP },
     bloom: { ...OFF, intensity: 0.1, blurLevel: 2 },
-    grading: { ...OFF, brightness: 1, contrast: 1, saturation: 1, tint: [1, 1, 1] },
+    grading: { enabled: GRADE, brightness: 1.0, contrast: 1.06, saturation: 1.06, tint: [1, 1, 1] },
     vignette: { ...OFF, intensity: 0.5, inner: 0.3, outer: 0.75, curvature: 1 },
     fringing: { ...OFF, intensity: 0.5 },
   },
@@ -345,6 +352,93 @@ const hasGL = (() => {
     return !!(navigator.gpu || c.getContext('webgl2'));
   } catch { return false; }
 })();
+
+// ---------------------------------------------------------------------------
+// Sharp when still, smooth when moving: render at reduced resolution while the
+// camera is moving and switch back to full resolution ~1/4 s after it stops.
+// The viewer only draws when something changes, so the full-resolution frame
+// costs one render, not a frame rate.
+// ---------------------------------------------------------------------------
+const MOTION_SCALE = params.has('motionscale') ? Number(params.get('motionscale')) : 0.6;
+function setupAdaptiveResolution(app) {
+  const cam = app.root.findByName('camera');
+  if (!cam || !(MOTION_SCALE > 0 && MOTION_SCALE < 1)) return;
+  const last = new Float32Array(16);
+  let moving = false, stillTicks = 0, lastMove = 0;
+  // 'framerender' fires every animation tick (whether or not a frame is drawn), so it
+  // doubles as a cheap motion detector. Settle only after several quiet ticks AND a
+  // quiet 200 ms, so a single slow frame can't make the resolution flip back and forth.
+  app.on('framerender', () => {
+    const m = cam.getWorldTransform().data;
+    let changed = false;
+    for (let i = 0; i < 16; i++) if (Math.abs(m[i] - last[i]) > 2e-4) { changed = true; break; }
+    const now = performance.now();
+    if (changed) {
+      last.set(m);
+      stillTicks = 0;
+      lastMove = now;
+      if (!moving) { moving = true; globalThis.__sseResolutionScale = MOTION_SCALE; }
+    } else if (moving && ++stillTicks >= 8 && now - lastMove > 200) {
+      moving = false;
+      globalThis.__sseResolutionScale = 1;
+      app.renderNextFrame = true; // draw one sharp frame at full resolution
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Background prefetch: once the first view has finished loading, quietly pull
+// the finer detail levels into the browser cache one file at a time, so turning
+// around or jumping between views doesn't show a blurry patch while it streams.
+// ?noprefetch turns it off.
+// ---------------------------------------------------------------------------
+async function startPrefetch(app, contentUrl) {
+  if (params.has('noprefetch') || !/lod-meta\.json$/.test(contentUrl)) return;
+  const base = new URL(contentUrl, location.href);
+  let meta;
+  try { meta = await (await fetch(base)).json(); } catch { return; }
+  const metas = (meta.filenames || []).slice()
+    // coarse to fine: "4_0/meta.json" before "0_3/meta.json"
+    .sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
+  // wait until the viewer reports it has nothing in flight
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    const sys = app.systems && app.systems.gsplat;
+    if (sys && sys.on) {
+      const h = (camera, layer, ready, loading) => { if (ready && loading === 0) { sys.off('frame:ready', h); finish(); } };
+      sys.on('frame:ready', h);
+    }
+    setTimeout(finish, 15000);
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+  const seen = new Set(performance.getEntriesByType('resource').map((e) => e.name));
+  for (const m of metas) {
+    try {
+      const mUrl = new URL(m, base);
+      const r = await fetch(mUrl);
+      const fileMeta = await r.json();
+      const dir = new URL('.', mUrl);
+      const files = new Set();
+      const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        if (Array.isArray(o.files)) o.files.forEach((f) => files.add(f));
+        Object.values(o).forEach(walk);
+      };
+      walk(fileMeta);
+      for (const f of files) {
+        const u = new URL(f, dir).href;
+        if (seen.has(u)) continue;
+        seen.add(u);
+        await fetch(u, { priority: 'low' }).then((res) => res.arrayBuffer()).catch(() => {});
+      }
+    } catch { /* keep going */ }
+  }
+}
+
+// ?fast restores the viewer's phone default (half resolution, 1M splats) for older phones
+const FAST = params.has('fast');
+try { localStorage.setItem('performanceMode', FAST ? 'true' : 'false'); } catch { /* storage blocked */ }
 
 async function start() {
   if (!hasGL) return fail('No WebGL2/WebGPU');
@@ -365,7 +459,9 @@ async function start() {
     return fail(err);
   }
   window.or45 = handle;
-  const { state, events } = handle;
+  const { state, events, app } = handle;
+  try { if (!FAST && state.performanceMode) state.performanceMode = false; } catch { /* ignore */ }
+  setupAdaptiveResolution(app);
   // start with hotspots hidden: the buttons at the bottom do that job
   try { state.showAnnotations = false; } catch { /* older viewer */ }
 
@@ -406,6 +502,7 @@ async function start() {
     }
   };
   if (state.loaded) onLoaded(); else events.on('loaded:changed', (v) => v && onLoaded());
+  startPrefetch(app, contentUrl);
 
   viewsEl.addEventListener('click', (e) => {
     const b = e.target.closest('.view-btn');

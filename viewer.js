@@ -102025,7 +102025,10 @@ const resizeCanvas = (canvas, cssSize, performanceMode) => {
     // maximum pixel dimension we will allow along the shortest screen dimension based on platform
     const maxPixelDim = platform.mobile ? 1080 : 2160;
     const pixelRatio = Math.min(maxPixelDim / Math.min(screen.width, screen.height), window.devicePixelRatio);
-    const scale = pixelRatio * (performanceMode ? 0.5 : 1.0);
+    // OR45 patch: host pages can lower resolution while the camera moves and restore it at
+    // rest (globalThis.__sseResolutionScale, 0..1). Unset means unchanged behaviour.
+    const hostScale = Math.min(1, Math.max(0.25, Number(globalThis.__sseResolutionScale) || 1));
+    const scale = pixelRatio * (performanceMode ? 0.5 : 1.0) * hostScale;
     const width = Math.ceil(cssSize.width * scale);
     const height = Math.ceil(cssSize.height * scale);
     if (width !== canvas.width || height !== canvas.height) {

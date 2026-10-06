@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>OR 45 · Digital Twin</title>
+<meta name="description" content="Explore a 3D digital twin of Operating Room 45. Drag to look around, pinch to zoom.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0d10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OR 45">
+<meta property="og:title" content="OR 45 · Digital Twin">
+<meta property="og:description" content="Tap to explore the operating room in 3D on your phone.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="preview.jpg">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-180.png">
+<link rel="stylesheet" href="viewer.css">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --glass: rgba(18, 21, 26, 0.72);
+    --glass-strong: rgba(18, 21, 26, 0.9);
+    --line: rgba(255, 255, 255, 0.12);
+    --text: #f4f6f8;
+    --muted: #a7b0ba;
+    --accent: #5ad1c0;
+    --accent-ink: #062823;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+  }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    overflow: hidden; overscroll-behavior: none;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+  body { position: fixed; inset: 0; }
+  #app { position: absolute; inset: 0; }
+
+  /* Hide the stock viewer chrome: this page supplies its own, simpler controls */
+  .sse-viewer .sse-controlsWrap, .sse-viewer .sse-controlsHint, .sse-viewer .sse-viewerBranding,
+  .sse-viewer .sse-annotationNav, .sse-viewer .sse-settingsPanel, .sse-viewer .sse-infoPanel,
+  .sse-viewer .sse-loadingWrap, .sse-viewer .sse-annotation-hotspots, .sse-viewer .sse-annotation-hotspot,
+  .sse-viewer .sse-annotation, .sse-viewer .sse-tooltip, .sse-viewer .sse-poster { display: none !important; }
+
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* Top bar */
+  .topbar {
+    position: absolute; z-index: 20; left: 0; right: 0; top: 0;
+    padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) 0 calc(var(--safe-l) + 12px);
+    display: flex; align-items: center; justify-content: space-between; pointer-events: none;
+  }
+  .title-pill {
+    pointer-events: auto; display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    font-size: 15px; font-weight: 600; letter-spacing: 0.01em;
+  }
+  .title-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .title-pill .sub { color: var(--muted); font-weight: 500; }
+  .round-btn {
+    pointer-events: auto; width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--glass); border: 1px solid var(--line);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    font-size: 20px; font-weight: 700;
+  }
+  .round-btn:active { transform: scale(0.94); }
+
+  /* Bottom view buttons */
+  .dock {
+    position: absolute; z-index: 20; left: 0; right: 0; bottom: 0;
+    padding: 0 0 calc(var(--safe-b) + 12px) 0; pointer-events: none;
+  }
+  .dock-label {
+    margin: 0 0 8px calc(var(--safe-l) + 16px); font-size: 13px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+  }
+  .views {
+    pointer-events: auto; display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity;
+    padding: 2px calc(var(--safe-r) + 16px) 2px calc(var(--safe-l) + 16px);
+    scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x;
+  }
+  .views::-webkit-scrollbar { display: none; }
+  .view-btn {
+    flex: 0 0 auto; scroll-snap-align: start; min-height: 52px; padding: 0 18px;
+    display: flex; align-items: center; gap: 10px; border-radius: 16px;
+    background: var(--glass); border: 1px solid var(--line);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    font-size: 16px; font-weight: 600; white-space: nowrap; touch-action: manipulation;
+    transition: background-color 150ms ease, color 150ms ease, transform 100ms ease;
+  }
+  .view-btn svg { width: 22px; height: 22px; flex: 0 0 auto; }
+  .view-btn:active { transform: scale(0.97); }
+  .view-btn.active { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+  /* Full-screen overlays */
+  .overlay {
+    position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+    padding: calc(var(--safe-t) + 24px) calc(var(--safe-r) + 20px) calc(var(--safe-b) + 24px) calc(var(--safe-l) + 20px);
+    box-sizing: border-box;
+  }
+  #loading { background: radial-gradient(120% 80% at 50% 30%, #18202a 0%, var(--bg) 70%); text-align: center; }
+  #loading h1 { margin: 0 0 6px; font-size: 34px; font-weight: 700; letter-spacing: -0.01em; }
+  #loading p { margin: 0; color: var(--muted); font-size: 17px; line-height: 1.4; }
+  .bar { width: min(280px, 72vw); height: 8px; margin: 28px auto 12px; border-radius: 999px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .bar > div { height: 100%; width: 4%; border-radius: inherit; background: var(--accent); transition: width 250ms ease; }
+  #loadPct { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hint-small { margin-top: 26px !important; font-size: 14px !important; }
+
+  #coach { background: rgba(5, 7, 9, 0.55); align-items: flex-end; }
+  @media (min-height: 560px) { #coach { align-items: center; } }
+  .card {
+    width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
+    padding: 24px 20px 20px; border-radius: 24px; background: var(--glass-strong); border: 1px solid var(--line);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .card h2 { margin: 0 0 4px; font-size: 24px; font-weight: 700; }
+  .card .lead { margin: 0 0 18px; color: var(--muted); font-size: 16px; line-height: 1.4; }
+  .gesture { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .gesture:first-of-type { border-top: 0; }
+  .gesture svg { width: 46px; height: 46px; flex: 0 0 auto; }
+  .gesture b { display: block; font-size: 17px; font-weight: 650; }
+  .gesture span { display: block; color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .primary {
+    display: block; width: 100%; min-height: 54px; margin-top: 18px; border-radius: 16px;
+    background: var(--accent); color: var(--accent-ink); font-size: 18px; font-weight: 700;
+  }
+  .primary:active { transform: scale(0.98); }
+  .footnote { margin: 12px 0 0; text-align: center; color: var(--muted); font-size: 14px; }
+
+  #error { background: var(--bg); text-align: center; }
+  #error h2 { margin: 0 0 10px; font-size: 24px; }
+  #error p { margin: 0 auto; max-width: 340px; color: var(--muted); font-size: 17px; line-height: 1.45; }
+
+  @media (orientation: landscape) and (max-height: 500px) {
+    .dock-label { display: none; }
+    .view-btn { min-height: 46px; }
+    #loading h1 { font-size: 28px; }
+    .bar { margin-top: 18px; }
+    .hint-small { margin-top: 14px !important; }
+    #coach { align-items: center; padding-top: calc(var(--safe-t) + 10px); padding-bottom: calc(var(--safe-b) + 10px); }
+    .card { max-width: 640px; padding: 16px 18px 14px; }
+    .card h2 { font-size: 20px; }
+    .card .lead, .footnote { display: none; }
+    #gestures { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; margin-top: 8px; }
+    .gesture { padding: 6px 0; border-top: 0; }
+    .gesture svg { width: 36px; height: 36px; }
+    .gesture b { font-size: 15px; }
+    .gesture span { font-size: 13px; }
+    .primary { min-height: 46px; margin-top: 10px; font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="topbar">
+  <div class="title-pill"><span class="dot"></span>OR 45 <span class="sub">Digital Twin</span></div>
+  <button class="round-btn" id="helpBtn" aria-label="How to use">?</button>
+</div>
+
+<div class="dock hidden" id="dock">
+  <div class="dock-label">Jump to</div>
+  <div class="views" id="views"></div>
+</div>
+
+<div class="overlay" id="loading">
+  <div>
+    <h1>OR 45</h1>
+    <p>Digital twin of the operating room</p>
+    <div class="bar"><div id="loadBar"></div></div>
+    <div id="loadPct">Loading…</div>
+    <p class="hint-small">This takes a few seconds. Wi-Fi is fastest.</p>
+  </div>
+</div>
+
+<div class="overlay hidden" id="coach" role="dialog" aria-modal="true" aria-labelledby="coachTitle">
+  <div class="card">
+    <h2 id="coachTitle">Look around the room</h2>
+    <p class="lead">You're standing inside the operating room. Try these:</p>
+    <div id="gestures"></div>
+    <button class="primary" id="coachGo">Start exploring</button>
+    <p class="footnote" id="coachFoot">Tip: turn your phone sideways for a wider view.</p>
+  </div>
+</div>
+
+<div class="overlay hidden" id="error">
+  <div>
+    <h2>This phone can't show the 3D room</h2>
+    <p id="errorMsg">Please try again on a newer iPhone, an iPad, or a computer.</p>
+  </div>
+</div>
+
+<script type="module">
+import { createViewer } from './viewer.js';
+
+// ---------------------------------------------------------------------------
+// Preset viewpoints — the buttons along the bottom. Rename a button by editing
+// its label. Coordinates are scene metres, Y up: the floor is at about y = -1.80,
+// standing eye height is about y = -0.15, and the table top is at about y = -0.80.
+// fov is the zoom (degrees, wider = more of the room). The first entry is where
+// every visit starts.
+// ---------------------------------------------------------------------------
+const VIEWS = [
+  { id: 'overview', label: 'Whole room', icon: 'room',
+    position: [-2.4, 0.9, 0.8], target: [0.05, -0.9, -0.5], fov: 85 },
+  { id: 'side', label: 'Beside the table', icon: 'table',
+    position: [-1.25, -0.05, 0.75], target: [0.1, -0.85, -0.45], fov: 72 },
+  { id: 'end', label: 'End of the table', icon: 'end',
+    position: [1.4, 0.1, 2.15], target: [-0.35, -0.95, -1.0], fov: 72 },
+  { id: 'other', label: 'Other side', icon: 'side',
+    position: [1.25, -0.05, -1.25], target: [-0.05, -0.85, -0.35], fov: 72 },
+  { id: 'anaesthesia', label: 'Anaesthesia area', icon: 'monitor',
+    position: [0.2, -0.05, -0.6], target: [-2.2, -0.9, -1.3], fov: 72 },
+];
+
+const params = new URL(location.href).searchParams;
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const $ = (id) => document.getElementById(id);
+
+// The viewer's fov is vertical. Each view gives a reference fov for a square screen;
+// scale it by the square root of the screen's shape so a portrait phone sees more of
+// the room side to side and a landscape phone doesn't get a fish-eye.
+const vfov = (fov) => {
+  const aspect = Math.max(0.3, innerWidth / Math.max(1, innerHeight));
+  const v = 2 * Math.atan(Math.tan((fov * Math.PI) / 360) / Math.sqrt(aspect)) * (180 / Math.PI);
+  return Math.round(Math.min(95, Math.max(40, v)));
+};
+
+// Debug/authoring: ?cam=px,py,pz,tx,ty,tz[,fov] starts from an arbitrary pose
+const camParam = params.get('cam');
+if (camParam) {
+  const v = camParam.split(',').map(Number);
+  if (v.length >= 6 && v.every(Number.isFinite)) {
+    VIEWS.unshift({ id: 'custom', label: 'Custom', icon: 'room', position: v.slice(0, 3), target: v.slice(3, 6), fov: v[6] || 72 });
+  }
+}
+
+const ICONS = {
+  room: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 4l9 5.5v9L12 22l-9-3.5z"/><path d="M12 22v-8.5M3 9.5l9 4 9-4"/></svg>',
+  table: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="4" rx="1"/><path d="M8 13v6M16 13v6M6 19h12"/><circle cx="12" cy="5" r="2"/></svg>',
+  end: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="14" rx="2"/><path d="M12 22v-3M9.5 20.5 12 18l2.5 2.5"/></svg>',
+  side: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M22 12h-3M20.5 9.5 18 12l2.5 2.5"/></svg>',
+  monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M6 11h3l1.5-3 2 6 1.5-3H18M9 20h6M12 16v4"/></svg>',
+};
+
+const GESTURES_TOUCH = [
+  ['drag', 'Drag with one finger', 'to look around'],
+  ['pinch', 'Pinch', 'to zoom in and out'],
+  ['two', 'Drag with two fingers', 'to slide sideways'],
+  ['dtap', 'Double-tap anything', 'to fly over to it'],
+];
+const GESTURES_MOUSE = [
+  ['drag', 'Click and drag', 'to look around'],
+  ['pinch', 'Scroll wheel', 'to zoom in and out'],
+  ['two', 'Right-click and drag', 'to slide sideways'],
+  ['dtap', 'Double-click anything', 'to fly over to it'],
+];
+const G_ICON = {
+  drag: '<svg viewBox="0 0 48 48" fill="none" stroke="#5ad1c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="6" fill="rgba(90,209,192,.25)"/><path d="M8 24h8M32 24h8M11 20l-4 4 4 4M37 20l4 4-4 4"/></svg>',
+  pinch: '<svg viewBox="0 0 48 48" fill="none" stroke="#5ad1c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="17" cy="31" r="5" fill="rgba(90,209,192,.25)"/><circle cx="31" cy="17" r="5" fill="rgba(90,209,192,.25)"/><path d="M8 40l4-4M40 8l-4 4M8 40h5M8 40v-5M40 8h-5M40 8v5"/></svg>',
+  two: '<svg viewBox="0 0 48 48" fill="none" stroke="#5ad1c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="19" cy="20" r="5" fill="rgba(90,209,192,.25)"/><circle cx="31" cy="20" r="5" fill="rgba(90,209,192,.25)"/><path d="M12 36h24M16 32l-4 4 4 4M32 32l4 4-4 4"/></svg>',
+  btn: '<svg viewBox="0 0 48 48" fill="none" stroke="#5ad1c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="14" width="38" height="16" rx="8"/><circle cx="30" cy="30" r="5" fill="rgba(90,209,192,.25)"/><path d="M30 37v5"/></svg>',
+  dtap: '<svg viewBox="0 0 48 48" fill="none" stroke="#5ad1c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="5" fill="rgba(90,209,192,.25)"/><circle cx="24" cy="24" r="11"/><circle cx="24" cy="24" r="17" opacity=".5"/></svg>',
+};
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+$('gestures').innerHTML = (isTouch ? GESTURES_TOUCH : GESTURES_MOUSE).map(([k, b, s]) =>
+  `<div class="gesture">${G_ICON[k]}<div><b>${b}</b><span>${s}</span></div></div>`).join('') +
+  `<div class="gesture">${G_ICON.btn}<div><b>Or ${isTouch ? 'tap' : 'click'} a button at the bottom</b><span>to jump straight to a spot</span></div></div>`;
+if (!isTouch) $('coachFoot').textContent = 'Keyboard: W A S D to move.';
+
+const viewsEl = $('views');
+VIEWS.forEach((v, i) => {
+  const b = document.createElement('button');
+  b.className = 'view-btn';
+  b.dataset.index = String(i);
+  b.innerHTML = `${ICONS[v.icon] || ICONS.room}<span>${v.label}</span>`;
+  viewsEl.appendChild(b);
+});
+const setActive = (i) => {
+  viewsEl.querySelectorAll('.view-btn').forEach((b) => b.classList.toggle('active', Number(b.dataset.index) === i));
+};
+
+const storage = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+};
+let afterCoach = null; // set once the scene is ready; runs when the card is closed
+const showCoach = () => $('coach').classList.remove('hidden');
+const hideCoach = () => {
+  $('coach').classList.add('hidden');
+  storage.set('or45-coach-seen', '1');
+  const fn = afterCoach; afterCoach = null; fn?.();
+};
+$('coachGo').addEventListener('click', hideCoach);
+$('helpBtn').addEventListener('click', showCoach);
+
+const fail = (msg) => {
+  console.error(msg);
+  $('loading').classList.add('hidden');
+  $('error').classList.remove('hidden');
+};
+
+// ---------------------------------------------------------------------------
+// Viewer
+// ---------------------------------------------------------------------------
+const OFF = { enabled: false };
+const settings = {
+  version: 2,
+  tonemapping: 'none',
+  highPrecisionRendering: false,
+  background: { color: [0.043, 0.051, 0.063] },
+  postEffectSettings: {
+    sharpness: { ...OFF, amount: 0 },
+    bloom: { ...OFF, intensity: 0.1, blurLevel: 2 },
+    grading: { ...OFF, brightness: 1, contrast: 1, saturation: 1, tint: [1, 1, 1] },
+    vignette: { ...OFF, intensity: 0.5, inner: 0.3, outer: 0.75, curvature: 1 },
+    fringing: { ...OFF, intensity: 0.5 },
+  },
+  animTracks: [],
+  cameras: [{ initial: { position: VIEWS[0].position, target: VIEWS[0].target, fov: vfov(VIEWS[0].fov) } }],
+  annotations: VIEWS.map((v) => ({
+    position: v.target, title: v.label, text: '',
+    camera: { initial: { position: v.position, target: v.target, fov: vfov(v.fov) } },
+  })),
+  startMode: 'default',
+};
+
+const hasGL = (() => {
+  try {
+    const c = document.createElement('canvas');
+    return !!(navigator.gpu || c.getContext('webgl2'));
+  } catch { return false; }
+})();
+
+async function start() {
+  if (!hasGL) return fail('No WebGL2/WebGPU');
+  const contentUrl = params.get('content') || 'scene/lod-meta.json';
+  const budget = params.has('budget') ? Number(params.get('budget')) : undefined;
+  let handle;
+  try {
+    handle = await createViewer({
+      container: $('app'),
+      settings,
+      contentUrl,
+      renderer: params.has('webgl') ? 'webgl' : 'webgpu',
+      budget,
+      ministats: params.has('ministats'),
+      fullload: params.has('fullload'),
+    });
+  } catch (err) {
+    return fail(err);
+  }
+  window.or45 = handle;
+  const { state, events } = handle;
+  // start with hotspots hidden: the buttons at the bottom do that job
+  try { state.showAnnotations = false; } catch { /* older viewer */ }
+
+  const setProgress = (p) => {
+    const pct = Math.max(4, Math.min(100, Math.round(p || 0)));
+    $('loadBar').style.width = pct + '%';
+    $('loadPct').textContent = pct >= 100 ? 'Almost there…' : `Loading… ${pct}%`;
+  };
+  setProgress(state.progress);
+  events.on('progress:changed', setProgress);
+
+  // Fly to a preset, re-fitting its field of view to the screen as it is now
+  // (the phone may have been turned since the page loaded)
+  const goTo = (i) => {
+    const ann = handle.annotations[i];
+    if (ann) ann.camera.initial.fov = vfov(VIEWS[i].fov);
+    handle.selectAnnotation(i);
+    setActive(i);
+  };
+
+  // Always use the orbit camera: drag turns the view around what you're looking at,
+  // which is the hardest mode to get lost in. (Left alone, the viewer would fall back
+  // to free-fly after its idle drift is interrupted.)
+  const settle = () => {
+    try { if (state.cameraMode !== 'orbit') state.cameraMode = 'orbit'; } catch { /* ignore */ }
+  };
+  const onLoaded = () => {
+    $('loading').classList.add('hidden');
+    $('dock').classList.remove('hidden');
+    setActive(0);
+    if (!storage.get('or45-coach-seen') && !camParam && !params.has('nocoach')) {
+      // let the gentle idle drift play behind the card as a hint that the scene is live,
+      // then glide back to the starting view when the card is closed
+      afterCoach = () => goTo(0);
+      showCoach();
+    } else {
+      settle();
+    }
+  };
+  if (state.loaded) onLoaded(); else events.on('loaded:changed', (v) => v && onLoaded());
+
+  viewsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('.view-btn');
+    if (!b || !state.loaded) return;
+    goTo(Number(b.dataset.index));
+  });
+  // tapping the scene (rather than a button) clears the highlighted button
+  events.on('selectedAnnotation:changed', (v) => setActive(v === null ? -1 : v));
+}
+
+// Safety net: if nothing has loaded after 30 s, reassure rather than leave a frozen bar
+setTimeout(() => {
+  if (!$('loading').classList.contains('hidden')) {
+    $('loadPct').textContent = 'Still loading… a slow connection can take a minute.';
+  }
+}, 30000);
+
+start();
+</script>
+</body>
+</html>
